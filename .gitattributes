@@ -1,0 +1,5 @@
+# Generated artefacts are LF everywhere. scripts/generate_map.py writes them
+# with an explicit newline="\n" so the same generator produces byte-identical
+# files on Windows and Linux; this stops git from undoing that on checkout.
+* text=auto eol=lf
+*.pgm binary

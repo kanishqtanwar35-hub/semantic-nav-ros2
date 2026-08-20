@@ -1,0 +1,4 @@
+# Everything needed to run the natural-language layer, the planners and the
+# whole test suite WITHOUT ROS. The ROS packages come from apt/rosdep, not pip.
+PyYAML>=5.4
+pytest>=6.2

@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robot_core</name>
+  <version>1.0.0</version>
+  <description>
+    ROS-free robotics library: occupancy grids, path planners, 2D geometry,
+    semantic landmark maps and a velocity safety governor. Contains no ROS
+    imports so every algorithm is unit-testable without starting a ROS graph.
+  </description>
+  <maintainer email="kanishqtanwar35@gmail.com">Kanishq Tanwar</maintainer>
+  <license>MIT</license>
+
+  <!-- Deliberately no rclpy dependency. This package is the "fat library"
+       half of thin-nodes/fat-library: it must stay importable by plain
+       pytest, and adding rclpy here is how that guarantee gets lost. -->
+  <exec_depend>python3-yaml</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
