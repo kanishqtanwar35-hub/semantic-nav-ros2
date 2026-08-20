@@ -1,0 +1,128 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # The claim this job exists to prove: the algorithms in this repository are
+  # testable without ROS. If `robot_core` ever grows an `import rclpy`, this job
+  # fails on a plain Ubuntu runner while the ROS job below stays green - which
+  # is exactly the signal you want, because the ROS job would never notice.
+  # ---------------------------------------------------------------------------
+  no-ros:
+    name: tests without ROS (${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: python -m pip install --upgrade pip pytest pyyaml
+
+      - name: Run the suite
+        env:
+          PYTHONPATH: src/robot_core:src/semantic_nav
+        run: pytest -q
+
+      - name: The demo runs with no API key and no ROS
+        env:
+          PYTHONPATH: src/robot_core:src/semantic_nav
+        run: python -m semantic_nav.cli --demo --no-llm
+
+      - name: Every unsafe instruction is refused
+        env:
+          PYTHONPATH: src/robot_core:src/semantic_nav
+        # Exits non-zero if anything on the refusal list executes.
+        run: python -m semantic_nav.cli --security --no-llm
+
+      - name: The generated maps match the code that generates them
+        run: |
+          python scripts/generate_map.py
+          git diff --exit-code -- src/robot_bringup/maps \
+                                  src/robot_bringup/worlds \
+                                  src/robot_bringup/config/semantic_map.yaml
+
+  # ---------------------------------------------------------------------------
+  # The real thing: colcon build + colcon test in a ROS 2 Humble container.
+  #
+  # ros:humble-ros-base, not desktop. If the workspace builds here it builds
+  # without Gazebo, RViz or Nav2 installed - the property that keeps the CI job
+  # short and the packages honest about their dependencies.
+  # ---------------------------------------------------------------------------
+  colcon:
+    name: colcon build + test (Humble)
+    runs-on: ubuntu-latest
+    container:
+      image: ros:humble-ros-base
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ros-humble-xacro \
+            ros-humble-ament-cmake-pytest \
+            ros-humble-ament-flake8 \
+            ros-humble-ament-copyright \
+            ros-humble-ament-pep257 \
+            python3-pytest
+          rm -rf /var/lib/apt/lists/*
+
+      - name: colcon build
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon build --symlink-install --event-handlers console_direct+
+
+      - name: colcon test
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          colcon test --event-handlers console_direct+ --return-code-on-test-failure
+
+      - name: Test results
+        if: always()
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          colcon test-result --verbose
+
+      - name: The robot description expands
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          # A URDF that does not parse is a demo that dies two minutes into a
+          # Gazebo start-up. This costs a second.
+          xacro src/robot_bringup/urdf/robot.urdf.xacro > /tmp/robot.urdf
+          test -s /tmp/robot.urdf
+          grep -q 'base_footprint' /tmp/robot.urdf
+
+      - name: Launch files are loadable
+        shell: bash
+        run: |
+          source /opt/ros/humble/setup.bash
+          source install/setup.bash
+          for f in bringup navigation; do
+            python3 -c "
+          import importlib.util, sys
+          spec = importlib.util.spec_from_file_location('lf', 'src/robot_bringup/launch/$f.launch.py')
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          assert hasattr(module, 'generate_launch_description')
+          print('$f.launch.py ok')
+          "
+          done
