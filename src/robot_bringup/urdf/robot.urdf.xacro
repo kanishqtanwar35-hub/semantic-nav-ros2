@@ -1,0 +1,205 @@
+<?xml version="1.0"?>
+<!--
+  A differential-drive robot: chassis, two driven wheels, a caster, a 2D lidar
+  and a camera.
+
+  Two conventions here are worth knowing rather than copying:
+
+  1. `base_footprint` is the root, and `base_link` is raised above it by the
+     wheel radius. `base_footprint` sits on the ground directly under the
+     robot's centre, which is the frame Nav2 and AMCL localise. Rooting the
+     tree at `base_link` instead puts the robot's origin at axle height, and
+     every distance the navigation stack computes is then wrong by 5 cm in z.
+
+  2. Every link has inertia, and no inertia is zero. Gazebo silently ignores
+     links with zero or missing inertial blocks, so a robot that looks correct
+     in RViz falls through the floor or refuses to move in simulation. That
+     failure gives no error message at all, which is why the macro below
+     computes real values from mass and geometry.
+-->
+<robot name="semantic_bot" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <xacro:property name="chassis_length" value="0.36"/>
+  <xacro:property name="chassis_width"  value="0.30"/>
+  <xacro:property name="chassis_height" value="0.12"/>
+  <xacro:property name="chassis_mass"   value="6.0"/>
+
+  <xacro:property name="wheel_radius"     value="0.055"/>
+  <xacro:property name="wheel_width"      value="0.035"/>
+  <xacro:property name="wheel_mass"       value="0.35"/>
+  <xacro:property name="wheel_separation" value="0.30"/>
+
+  <xacro:property name="caster_radius" value="0.022"/>
+
+  <material name="slate">   <color rgba="0.24 0.27 0.32 1.0"/></material>
+  <material name="charcoal"><color rgba="0.10 0.10 0.12 1.0"/></material>
+  <material name="amber">   <color rgba="0.95 0.62 0.15 1.0"/></material>
+  <material name="teal">    <color rgba="0.13 0.62 0.60 1.0"/></material>
+
+  <!-- Solid-cylinder inertia. Approximating a wheel as a point mass makes it
+       spin up instantly and slip, which corrupts odometry — a physics bug that
+       presents as a localisation bug. -->
+  <xacro:macro name="cylinder_inertia" params="m r h">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(3*r*r + h*h)/12}" ixy="0.0" ixz="0.0"
+               iyy="${m*(3*r*r + h*h)/12}" iyz="0.0"
+               izz="${m*r*r/2}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="box_inertia" params="m x y z">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${m*(y*y + z*z)/12}" ixy="0.0" ixz="0.0"
+               iyy="${m*(x*x + z*z)/12}" iyz="0.0"
+               izz="${m*(x*x + y*y)/12}"/>
+    </inertial>
+  </xacro:macro>
+
+  <xacro:macro name="sphere_inertia" params="m r">
+    <inertial>
+      <mass value="${m}"/>
+      <inertia ixx="${2*m*r*r/5}" ixy="0.0" ixz="0.0"
+               iyy="${2*m*r*r/5}" iyz="0.0"
+               izz="${2*m*r*r/5}"/>
+    </inertial>
+  </xacro:macro>
+
+  <!-- ================================================================== -->
+  <!-- Base                                                                -->
+  <!-- ================================================================== -->
+
+  <link name="base_footprint"/>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child  link="base_link"/>
+    <origin xyz="0 0 ${wheel_radius}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 ${chassis_height/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+      <material name="slate"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 ${chassis_height/2}" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+    </collision>
+    <xacro:box_inertia m="${chassis_mass}" x="${chassis_length}"
+                       y="${chassis_width}" z="${chassis_height}"/>
+  </link>
+
+  <!-- ================================================================== -->
+  <!-- Wheels                                                              -->
+  <!-- ================================================================== -->
+
+  <xacro:macro name="drive_wheel" params="prefix reflect">
+    <link name="${prefix}_wheel_link">
+      <visual>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <material name="charcoal"/>
+      </visual>
+      <collision>
+        <origin xyz="0 0 0" rpy="${pi/2} 0 0"/>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+      </collision>
+      <xacro:cylinder_inertia m="${wheel_mass}" r="${wheel_radius}"
+                              h="${wheel_width}"/>
+    </link>
+
+    <joint name="${prefix}_wheel_joint" type="continuous">
+      <parent link="base_link"/>
+      <child  link="${prefix}_wheel_link"/>
+      <origin xyz="0 ${reflect * wheel_separation/2} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <dynamics damping="0.02" friction="0.001"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:drive_wheel prefix="left"  reflect="1"/>
+  <xacro:drive_wheel prefix="right" reflect="-1"/>
+
+  <link name="caster_link">
+    <visual>
+      <geometry><sphere radius="${caster_radius}"/></geometry>
+      <material name="charcoal"/>
+    </visual>
+    <collision>
+      <geometry><sphere radius="${caster_radius}"/></geometry>
+    </collision>
+    <xacro:sphere_inertia m="0.08" r="${caster_radius}"/>
+  </link>
+
+  <joint name="caster_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="caster_link"/>
+    <origin xyz="${chassis_length/2 - 0.05} 0 ${caster_radius - wheel_radius}"/>
+  </joint>
+
+  <!-- ================================================================== -->
+  <!-- Sensors                                                             -->
+  <!-- ================================================================== -->
+
+  <link name="lidar_link">
+    <visual>
+      <geometry><cylinder radius="0.038" length="0.045"/></geometry>
+      <material name="amber"/>
+    </visual>
+    <collision>
+      <geometry><cylinder radius="0.038" length="0.045"/></geometry>
+    </collision>
+    <xacro:cylinder_inertia m="0.16" r="0.038" h="0.045"/>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="lidar_link"/>
+    <!-- Mounted at the back so the chassis does not occlude the forward arc.
+         A lidar in the geometric centre of a robot this shape sees its own
+         body as a permanent obstacle ring. -->
+    <origin xyz="-0.06 0 ${chassis_height + 0.023}" rpy="0 0 0"/>
+  </joint>
+
+  <link name="camera_link">
+    <visual>
+      <geometry><box size="0.025 0.075 0.025"/></geometry>
+      <material name="teal"/>
+    </visual>
+    <collision>
+      <geometry><box size="0.025 0.075 0.025"/></geometry>
+    </collision>
+    <xacro:box_inertia m="0.06" x="0.025" y="0.075" z="0.025"/>
+  </link>
+
+  <joint name="camera_joint" type="fixed">
+    <parent link="base_link"/>
+    <child  link="camera_link"/>
+    <origin xyz="${chassis_length/2} 0 ${chassis_height*0.75}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- REP-103 says ROS is x-forward, y-left, z-up; vision libraries are
+       z-forward, x-right, y-down. This optical frame is where that conversion
+       lives. Skipping it is why camera detections sometimes appear rotated 90
+       degrees, and the fix gets misapplied as a magic transform elsewhere. -->
+  <link name="camera_optical_link"/>
+  <joint name="camera_optical_joint" type="fixed">
+    <parent link="camera_link"/>
+    <child  link="camera_optical_link"/>
+    <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
+  </joint>
+
+  <xacro:include filename="$(find robot_bringup)/urdf/robot.gazebo.xacro"/>
+
+</robot>

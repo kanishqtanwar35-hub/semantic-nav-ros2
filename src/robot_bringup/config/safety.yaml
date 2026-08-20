@@ -1,0 +1,35 @@
+# Velocity safety governor.
+#
+# These are the numbers that decide whether the robot hits something, so each
+# one is a decision rather than a default.
+safety_governor:
+  ros__parameters:
+    # Indoor, shared with people. 0.45 m/s is a brisk walk; anything faster
+    # around pedestrians buys seconds and costs trust.
+    max_linear: 0.45
+    max_angular: 1.2
+
+    # Acceleration limits exist for traction, not comfort. A step change in
+    # commanded velocity slips the wheels, the differential-drive odometry
+    # integrates that slip as real motion, and localisation drifts - a control
+    # problem that presents as a mapping bug.
+    max_linear_accel: 0.6
+    max_angular_accel: 2.0
+
+    # stop_distance must exceed the stopping distance at max_linear under
+    # max_linear_accel: 0.45^2 / (2 * 0.6) = 0.17 m. 0.35 m is roughly double
+    # that, which covers sensor latency and the 50 ms control period.
+    stop_distance: 0.35
+    slow_distance: 1.0
+
+    # The lidar publishes at 10 Hz. A 0.5 s timeout is five missed scans - long
+    # enough not to trip on jitter, short enough that a wedged driver stops the
+    # robot within half a metre at full speed.
+    scan_timeout: 0.5
+
+    # Only the forward arc matters when driving forwards. A wall 20 cm to the
+    # left of a robot moving straight ahead is not a reason to stop, and
+    # treating it as one makes the robot unusable in a corridor.
+    front_arc_deg: 60.0
+
+    rate_hz: 20.0

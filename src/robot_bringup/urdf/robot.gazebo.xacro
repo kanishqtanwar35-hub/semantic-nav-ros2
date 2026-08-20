@@ -1,0 +1,162 @@
+<?xml version="1.0"?>
+<!--
+  Gazebo Classic plugins: differential drive, 2D lidar, camera.
+
+  Split into its own file so the kinematic description stays readable and so
+  the robot can be loaded into RViz without dragging simulator-specific tags
+  along. Real hardware uses the same `robot.urdf.xacro` with this include
+  swapped for the driver's own configuration — which is the reason the split
+  exists rather than tidiness.
+
+  The topic remapping below is the single most important line in the file:
+
+      <remapping>cmd_vel:=cmd_vel_raw</remapping>
+
+  The simulated base does NOT subscribe to /cmd_vel. It subscribes to
+  /cmd_vel_raw, which is the safety governor's *input*. The only publisher on
+  /cmd_vel is the governor, so there is no way for any node — including one
+  written later by someone who never read this file — to reach the wheels
+  without passing through the safety layer. Enforcing that in the topology is
+  worth more than any amount of documentation asking people to be careful.
+-->
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <gazebo reference="base_link">
+    <material>Gazebo/DarkGrey</material>
+  </gazebo>
+
+  <!-- mu1/mu2 are the friction coefficients. Left at Gazebo's default the
+       wheels slip, the differential-drive odometry integrates that slip as
+       real motion, and the robot's estimated pose drifts away from the truth
+       within one lap of the office. -->
+  <xacro:macro name="wheel_physics" params="link">
+    <gazebo reference="${link}">
+      <material>Gazebo/Black</material>
+      <mu1>1.2</mu1>
+      <mu2>1.2</mu2>
+      <kp>1000000.0</kp>
+      <kd>10.0</kd>
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:wheel_physics link="left_wheel_link"/>
+  <xacro:wheel_physics link="right_wheel_link"/>
+
+  <!-- The caster is nearly frictionless on purpose: a caster with grip fights
+       every turn and the robot drives like it is on rails. -->
+  <gazebo reference="caster_link">
+    <material>Gazebo/Black</material>
+    <mu1>0.02</mu1>
+    <mu2>0.02</mu2>
+  </gazebo>
+
+  <!-- ================================================================== -->
+  <!-- Differential drive                                                  -->
+  <!-- ================================================================== -->
+
+  <gazebo>
+    <plugin name="diff_drive" filename="libgazebo_ros_diff_drive.so">
+      <ros>
+        <remapping>cmd_vel:=cmd_vel_raw</remapping>
+        <remapping>odom:=odom</remapping>
+      </ros>
+
+      <update_rate>50</update_rate>
+      <left_joint>left_wheel_joint</left_joint>
+      <right_joint>right_wheel_joint</right_joint>
+      <wheel_separation>0.30</wheel_separation>
+      <wheel_diameter>0.11</wheel_diameter>
+
+      <max_wheel_torque>8.0</max_wheel_torque>
+      <max_wheel_acceleration>1.5</max_wheel_acceleration>
+
+      <publish_odom>true</publish_odom>
+      <publish_odom_tf>true</publish_odom_tf>
+      <publish_wheel_tf>true</publish_wheel_tf>
+
+      <odometry_frame>odom</odometry_frame>
+      <robot_base_frame>base_footprint</robot_base_frame>
+    </plugin>
+  </gazebo>
+
+  <!-- ================================================================== -->
+  <!-- 2D lidar                                                            -->
+  <!-- ================================================================== -->
+
+  <gazebo reference="lidar_link">
+    <material>Gazebo/Orange</material>
+    <sensor name="lidar" type="ray">
+      <pose>0 0 0 0 0 0</pose>
+      <visualize>false</visualize>
+      <update_rate>10</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range>
+          <!-- min_range must exceed the robot's own radius or the scan is
+               full of returns off its own chassis, which the costmap
+               faithfully renders as an obstacle that follows the robot. -->
+          <min>0.16</min>
+          <max>12.0</max>
+          <resolution>0.015</resolution>
+        </range>
+        <noise>
+          <!-- Noise on purpose. A noiseless lidar makes AMCL look far better
+               than it is, and code tuned against perfect data falls over on
+               the first real sensor. -->
+          <type>gaussian</type>
+          <mean>0.0</mean>
+          <stddev>0.01</stddev>
+        </noise>
+      </ray>
+      <plugin name="lidar_controller" filename="libgazebo_ros_ray_sensor.so">
+        <ros>
+          <remapping>~/out:=scan</remapping>
+        </ros>
+        <output_type>sensor_msgs/LaserScan</output_type>
+        <frame_name>lidar_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+  <!-- ================================================================== -->
+  <!-- Camera                                                              -->
+  <!-- ================================================================== -->
+
+  <gazebo reference="camera_link">
+    <material>Gazebo/Turquoise</material>
+    <sensor name="camera" type="camera">
+      <update_rate>15</update_rate>
+      <visualize>false</visualize>
+      <camera>
+        <horizontal_fov>1.089</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+          <format>R8G8B8</format>
+        </image>
+        <clip>
+          <near>0.05</near>
+          <far>15.0</far>
+        </clip>
+      </camera>
+      <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+        <ros>
+          <remapping>~/image_raw:=camera/image_raw</remapping>
+          <remapping>~/camera_info:=camera/camera_info</remapping>
+        </ros>
+        <!-- The optical frame, not camera_link. Publishing images in
+             camera_link means every projection into the map is rotated 90
+             degrees, and the symptom appears far from the cause. -->
+        <frame_name>camera_optical_link</frame_name>
+      </plugin>
+    </sensor>
+  </gazebo>
+
+</robot>
