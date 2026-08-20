@@ -80,6 +80,9 @@ thing it can emit is a verb from the list and a place from the map, and
 "disable the safety governor" is neither.
 
 `test_security.py` is 28 tests of instructions that must not execute.
+[docs/SECURITY.md](docs/SECURITY.md) is the long version: the threat
+model, why an allowlist rather than a denylist, the ordering bug in the
+safety governor, and an explicit list of what is **not** defended.
 
 ---
 
