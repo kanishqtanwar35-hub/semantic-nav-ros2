@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>semantic_nav</name>
+  <version>1.0.0</version>
+  <description>
+    Natural-language semantic navigation for ROS 2. Grounds free-text
+    instructions against a semantic landmark map, validates every step against
+    an allowlist, and drives Nav2. The language model is optional: the rule
+    parser handles core commands offline.
+  </description>
+  <maintainer email="kanishqtanwar35@gmail.com">Kanishq Tanwar</maintainer>
+  <license>MIT</license>
+
+  <depend>robot_core</depend>
+  <depend>rclpy</depend>
+  <depend>std_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>visualization_msgs</depend>
+
+  <!-- Nav2 is an exec_depend, not a depend: the package builds and its tests
+       run without it. Only Nav2Navigator needs it, and it imports lazily. -->
+  <exec_depend>nav2_msgs</exec_depend>
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
