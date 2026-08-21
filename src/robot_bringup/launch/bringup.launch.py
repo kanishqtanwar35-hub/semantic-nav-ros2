@@ -68,6 +68,16 @@ def generate_launch_description():
             description="false uses the in-process simulated navigator instead",
         ),
         DeclareLaunchArgument("rviz", default_value="false"),
+        DeclareLaunchArgument(
+            "perception", default_value="true",
+            description="Run the vision layer. Off, the robot navigates the "
+                        "hand-authored map exactly as before.",
+        ),
+        DeclareLaunchArgument(
+            "detector", default_value="auto",
+            description="auto | yolo | synthetic | scripted. 'auto' prefers a "
+                        "real model and falls back to synthetic, saying so.",
+        ),
 
         Node(
             package="robot_state_publisher",
@@ -112,6 +122,28 @@ def generate_launch_description():
             output="screen",
             parameters=[{
                 "semantic_map": semantic_map,
+                "use_sim_time": use_sim_time,
+            }],
+        ),
+
+        Node(
+            package="robot_perception",
+            executable="perception_node",
+            name="robot_perception",
+            output="screen",
+            condition=IfCondition(LaunchConfiguration("perception")),
+            parameters=[{
+                "backend": LaunchConfiguration("detector"),
+                "semantic_map": semantic_map,
+                # 2 Hz, not the camera's 15. On a CPU the detector takes
+                # hundreds of milliseconds, so frames must be dropped rather
+                # than queued - a queued frame is grounded against a stale
+                # pose and smears landmarks along the robot's path.
+                "detect_hz": 2.0,
+                # Perception PROPOSES. Committing to the map the navigation
+                # stack trusts is a separate, deliberate act:
+                #   ros2 topic pub --once /commit_landmarks std_msgs/Bool "data: true"
+                "auto_commit": False,
                 "use_sim_time": use_sim_time,
             }],
         ),

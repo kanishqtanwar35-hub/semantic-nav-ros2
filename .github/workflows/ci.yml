@@ -28,23 +28,38 @@ jobs:
           python-version: ${{ matrix.python }}
 
       - name: Install
+        # Note what is NOT here: no torch, no ultralytics, no opencv. The
+        # perception package's detector is a lazily-imported optional backend,
+        # so the whole suite - projection, tracking, confirmation, mapping -
+        # runs with two pure-Python dependencies.
         run: python -m pip install --upgrade pip pytest pyyaml
 
       - name: Run the suite
         env:
-          PYTHONPATH: src/robot_core:src/semantic_nav
+          PYTHONPATH: src/robot_core:src/semantic_nav:src/robot_perception
         run: pytest -q
 
       - name: The demo runs with no API key and no ROS
         env:
-          PYTHONPATH: src/robot_core:src/semantic_nav
+          PYTHONPATH: src/robot_core:src/semantic_nav:src/robot_perception
         run: python -m semantic_nav.cli --demo --no-llm
 
       - name: Every unsafe instruction is refused
         env:
-          PYTHONPATH: src/robot_core:src/semantic_nav
+          PYTHONPATH: src/robot_core:src/semantic_nav:src/robot_perception
         # Exits non-zero if anything on the refusal list executes.
         run: python -m semantic_nav.cli --security --no-llm
+
+      - name: A patrol builds a semantic map from perception
+        env:
+          PYTHONPATH: src/robot_core:src/semantic_nav:src/robot_perception
+        run: python -m robot_perception.cli patrol
+
+      - name: The confirmation policy still pays for itself
+        env:
+          PYTHONPATH: src/robot_core:src/semantic_nav:src/robot_perception
+        # Prints the with-policy / without-policy comparison the README quotes.
+        run: python -m robot_perception.cli accuracy
 
       - name: The generated maps match the code that generates them
         run: |

@@ -1,0 +1,40 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>robot_perception</name>
+  <version>1.0.0</version>
+  <description>
+    Vision to semantic landmarks: pinhole projection onto the ground plane,
+    multi-viewpoint track confirmation, and an allowlist between the detector
+    and the map. The detector is a swappable backend and no ML dependency is
+    required to build, test or run the package.
+  </description>
+  <maintainer email="kanishqtanwar35@gmail.com">Kanishq Tanwar</maintainer>
+  <license>MIT</license>
+
+  <depend>robot_core</depend>
+
+  <!-- ROS is needed only by perception_node.py. The library half of this
+       package imports none of it, which is what keeps 100+ tests running in
+       under a second with no ROS installed. -->
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>visualization_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+
+  <!-- The detector itself is deliberately NOT a dependency. `load_backend`
+       imports it lazily and falls back to the synthetic backend, so the
+       package installs and its tests pass on a machine with no ML stack. -->
+
+  <test_depend>ament_copyright</test_depend>
+  <test_depend>ament_flake8</test_depend>
+  <test_depend>ament_pep257</test_depend>
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

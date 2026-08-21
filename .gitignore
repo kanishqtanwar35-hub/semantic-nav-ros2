@@ -20,3 +20,7 @@ venv/
 .idea/
 .DS_Store
 Thumbs.db
+
+# Detector weights. Downloaded on first use and cached by ultralytics; a 6 MB
+# binary in git history is 6 MB in every clone forever, and it is not ours.
+*.pt

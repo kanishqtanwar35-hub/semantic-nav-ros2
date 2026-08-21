@@ -153,13 +153,29 @@ class SemanticMap:
                 normalised = _normalise(candidate)
                 if normalised == query:
                     score, on = 1.0, f"exact match on '{candidate}'"
-                elif query in normalised or normalised in query:
-                    # Containment is strong but not exact: "kitchen" inside
-                    # "office kitchen" is a real signal and a real ambiguity.
-                    shorter = min(len(query), len(normalised))
-                    longer = max(len(query), len(normalised))
-                    score = 0.80 + 0.15 * (shorter / longer)
+                elif query in normalised:
+                    # The candidate contains the query: the user named LESS than
+                    # the full landmark. "kitchen" for "office kitchen" is a
+                    # person being brief, which is normal and a strong signal.
+                    score = 0.80 + 0.15 * (len(query) / len(normalised))
                     on = f"substring match on '{candidate}'"
+                elif normalised in query:
+                    # The query contains the candidate: the user named MORE than
+                    # the landmark. Much weaker, and the two directions were
+                    # scored identically until perception started producing
+                    # compound names like "chair near the kitchen".
+                    #
+                    # That query contains "kitchen", so it scored 0.85 and the
+                    # robot confidently drove to the kitchen - the wrong place,
+                    # silently, which is exactly the failure the allowlist
+                    # exists to prevent. The extra words are the specific part
+                    # of the request, not noise to be discarded.
+                    #
+                    # Score by how much of what the user ASKED FOR this
+                    # landmark actually explains.
+                    score = 0.55 + 0.25 * (len(normalised) / len(query))
+                    on = (f"'{candidate}' explains only "
+                          f"{len(normalised) / len(query):.0%} of the request")
                 else:
                     score = SequenceMatcher(None, query, normalised).ratio()
                     on = f"fuzzy match on '{candidate}'"

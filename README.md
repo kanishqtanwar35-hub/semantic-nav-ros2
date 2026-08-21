@@ -4,13 +4,17 @@ Tell a robot **"go to the printer, wait five seconds, then go home"** and watch
 it plan a route through the doorway — and watch it *refuse* the instructions it
 should refuse.
 
-A ROS 2 Humble workspace: three packages, a URDF, launch files, a Gazebo world,
-Nav2 parameters, and a natural-language layer that grounds free text against a
-semantic landmark map before anything reaches the motors.
+Then let it **build that map itself** by driving around and looking.
+
+A ROS 2 Humble workspace: four packages, a URDF, launch files, a Gazebo world,
+Nav2 parameters, a vision layer that turns camera detections into landmarks, and
+a natural-language layer that grounds free text against them before anything
+reaches the motors.
 
 **Status:** `colcon build` and `colcon test` verified in `ros:humble-ros-base`.
-**305 tests, 0 failures.** The whole natural-language and planning stack also
-runs — and is tested — with no ROS installed at all.
+**439 tests, 0 failures.** The whole natural-language, planning **and
+perception** stack also runs — and is tested — with no ROS, no GPU and no ML
+dependencies installed at all.
 
 ```
 $ python -m semantic_nav.cli "go to the printer then wait 5 seconds then go home"
@@ -124,6 +128,165 @@ ros2 launch robot_bringup navigation.launch.py
 ros2 topic pub --once /nl_command std_msgs/String "data: 'go to the kitchen'"
 ros2 topic echo /nav_feedback
 ```
+
+---
+
+## The robot builds its own map
+
+**The real problem.** A semantic map typed by hand goes stale the moment
+somebody moves a desk. In an office or a warehouse that is weekly. So the map
+has to come from what the robot sees — which means turning a bounding box in a
+camera image into a coordinate on the floor, reliably enough to navigate to.
+
+```bash
+python -m robot_perception.cli patrol      # no ROS, no GPU, no model, no network
+```
+
+```
+patrol : 1181 poses, 34.6 m, 77 s at 0.45 m/s, 148 detector frames (1 in 8)
+frames : 148 detector frames, 127 raw detections
+tracks : 12
+
+5 proposal(s), 7 rejected
+  + dining table near the reception desk  (4.48, 0.95)  25 sightings / 9 viewpoints / 100 deg arc / spread 0.62 m
+  + tv near the printer                   (9.83, 2.68)  22 sightings / 10 viewpoints / 86 deg arc / spread 0.55 m
+  + dining table near the meeting room    (2.99, 7.00)  15 sightings / 7 viewpoints / 97 deg arc / spread 0.70 m
+  + chair near the kitchen                (9.00, 6.23)  13 sightings / 5 viewpoints / 117 deg arc / spread 0.28 m
+  + potted plant near the kitchen         (10.74, 7.56) 11 sightings / 4 viewpoints / 30 deg arc / spread 0.65 m
+  - chair: seen 1 times, needs 4; seen from 1 distinct viewpoint(s) at least 0.6 m apart,
+    needs 2 - more sightings from the same spot would not help, the robot has to move
+
+error  : mean 0.067 m, max 0.161 m against ground truth
+```
+
+Then the loop closes — the thing that was refused before the patrol now plans:
+
+```
+  'go to the chair near the kitchen'
+  go_to        -> chair near the kitchen (8.31, 6.20) [1.00]
+```
+
+### The measurement that is the whole argument
+
+```bash
+python -m robot_perception.cli accuracy
+```
+
+|  | mapped | ghosts | mean error | max error |
+|---|---|---|---|---|
+| confirmation policy **on** | 6 | **0** | **0.105 m** | 0.516 m |
+| confirmation policy **off** | 13 | **3** | 0.615 m | 3.011 m |
+
+*A ghost is a mapped landmark more than a metre from any real object.* Turning
+the policy off maps twice as much and maps it six times worse. That trade is
+the argument, and `test_the_policy_pays_for_itself` fails the build if it ever
+inverts.
+
+### Distinct viewpoints, not more frames
+
+Everybody knows single-frame detections are noisy, so everybody averages over
+frames. That removes **noise** and leaves **bias** exactly where it was — and
+the dominant error here is bias.
+
+Intersecting a camera ray with the ground plane is what lets a single camera
+produce a position at all. It is exact for something standing on the floor and
+wrong for anything that is not, and the error is *identical from an identical
+viewpoint*. At this camera height (0.145 m) a point only 5 cm off the floor
+projects **1.5× too far away**. A robot that stops and stares at a shelf for a
+hundred frames gets a hundred consistent measurements of the wrong position,
+and averaging makes it more confident about being wrong.
+
+So confirmation requires the robot to have **moved**:
+
+```
+N sightings  AND  from >= K positions at least D apart  AND  the views agree
+```
+
+Two views a metre apart disagree about a mis-projected object and agree about a
+correctly-projected one. That disagreement is the signal: `spread_m` measures
+it, and a track whose views disagree is **refused rather than averaged**,
+because a large spread is direct evidence the ground-plane assumption is failing
+for that particular object.
+
+A refusal always says which test it failed, because *"why is the chair not on
+the map"* is a question someone will ask.
+
+### The detector is untrusted input too
+
+`semantic_nav` puts an allowlist between the language model and the motors.
+A detector deserves the same treatment for the same reasons — it hallucinates,
+it can be fooled by an adversarial patch, and it is fooled far more often by a
+poster, a reflection in a glass partition, or a chair on a monitor in a video
+call.
+
+So perception gets the identical positive-security model:
+
+1. **A category allowlist.** Only the indoor classes can become a landmark.
+2. **Propose, never overwrite.** A hand-authored landmark is immutable to
+   perception. `apply()` is additive by construction — there is no code in it
+   that edits an existing landmark, because a detector that relocates the
+   charging dock strands the robot with a flat battery.
+3. **A budget.** At most 12 new landmarks per session; a detector stuck in a
+   failure mode emits hundreds of boxes a second.
+4. **People are detected and never mapped.** The most important thing a robot
+   can see, and the least appropriate thing to write into a persistent map —
+   they move, and recording where somebody stood on Tuesday is not navigation
+   data.
+5. **Every landmark carries its evidence** — sightings, viewpoints, arc, spread,
+   confidence — and is tagged `perceived`, so *"which parts of this map did a
+   model write"* is answerable with a filter rather than from memory.
+
+### The detector cannot keep up with the camera, and that is designed for
+
+YOLOv8n, 6.2 MB, CPU only — measured on this 4-core laptop:
+
+| image size | mean | p95 |
+|---|---|---|
+| 640 | 1178 ms | 1812 ms |
+| 416 | 1117 ms | 1551 ms |
+| 320 | 870 ms | 979 ms |
+
+The camera runs at 15 Hz, which is 67 ms a frame. The detector is an order of
+magnitude slower, so frames are **dropped, not queued** — and the pose used to
+ground a detection comes from that *image's own timestamp*, not from "now".
+Grounding against the current pose instead places every landmark wherever the
+robot has driven to during inference, which shows up as a smear of landmarks
+along the patrol route and reads as a mapping bug rather than a latency one.
+
+*(Those numbers were taken with other work running on the same four cores, so
+treat them as an upper bound. The architecture is the point: nothing here
+assumes the detector keeps up.)*
+
+### A patrol route for navigation is not a patrol route for perception
+
+Driving straight at an object gives many frames and almost no viewpoint
+diversity — the bearing barely changes as you approach. Stopping and rotating
+gives many headings from a single position, which triangulates nothing. What
+works is passing objects **to the side**, so the bearing sweeps while the robot
+translates. `patrol.py` generates the route deliberately for that reason, and
+the demo lane is offset from the furniture rather than aimed at it.
+
+### Two bugs worth reading about
+
+**The tracker merged two chairs into one.** Two detections in the *same frame*
+were being associated to the same track. One object cannot produce two boxes in
+one image, so simultaneous detections are different objects by definition —
+without that rule, two chairs 2 m apart both fell inside a 3 m gate, merged, and
+the track's median position landed in the empty floor between them. A confident
+landmark where there is carpet. Association is now globally greedy with
+one-observation-per-track-per-frame.
+
+**The synthetic detector was not reproducible, and the test could not see it.**
+Its noise came from Python's builtin `hash()`, which randomises string hashing
+per process unless `PYTHONHASHSEED` is set. Every *run* produced different
+noise, so the accuracy assertion failed about one run in three and passed on a
+rerun. The determinism test passed throughout, because it compared two detectors
+inside **one** process where the seed is shared. Fixed with `hashlib.blake2b`;
+`test_the_detector_is_deterministic_across_PROCESSES` now spawns two
+interpreters with different hash seeds and requires identical output.
+
+It is the same mistake `robot_core`'s RRT planner already carries a seed to
+prevent — one package over, in a form the existing test shape could not catch.
 
 ---
 
@@ -311,6 +474,7 @@ individually correct and two of them disagree. `robot_bringup/test` checks:
 |---|---|---|---|
 | `robot_core` | ament_python | Occupancy grid, A*, RRT, 2D geometry, semantic map, safety governor. **No ROS imports.** | 146 |
 | `semantic_nav` | ament_python | Grounding, command allowlist, Nav2 adapter, mission runner, three ROS nodes, CLI | 123 |
+| `robot_perception` | ament_python | Pinhole projection, multi-viewpoint confirmation, landmark proposals, swappable detector backend, one ROS node | 151 |
 | `robot_bringup` | ament_cmake | URDF/xacro, launch, Nav2 params, Gazebo world, generated maps | 33 |
 
 ```
@@ -321,6 +485,16 @@ src/
     geometry.py       quaternions, angle wrapping, unicycle control
     semantic_map.py   landmarks, aliases, approach poses, fuzzy resolution
     safety.py         the velocity governor
+  robot_perception/robot_perception/
+    camera.py         pinhole model, ground-plane projection, and its inverse
+    detection.py      Detection, the backend protocol, the indoor allowlist
+    tracking.py       multi-viewpoint confirmation - the heart of it
+    mapping.py        confirmed tracks -> landmark proposals, under an allowlist
+    patrol.py         routes designed for perception, not just navigation
+    backends/
+      synthetic.py    a detector with no model in it, for CI
+      yolo.py         the real one. Optional, lazily imported, never in CI
+    perception_node.py
   semantic_nav/semantic_nav/
     commands.py       the allowlist and validate()
     grounding.py      rule parser + model escalation
@@ -370,9 +544,18 @@ Notes on the integration:
 - **Simulation only.** Nothing here has run on physical hardware. Real lidar,
   real friction and real wheel slip are all harsher than Gazebo's versions, and
   I would expect the localisation and the friction constants to need work.
-- **The semantic map is hand-authored.** The interesting version builds it from
-  perception — detect objects, name them, place them. That is the roadmap item
-  that would make this a research project rather than an engineering one.
+- **The perceived map is only as good as the ground-plane assumption.** Anything
+  not standing on the floor — a wall-mounted screen, a shelf — is placed too far
+  away, and the pipeline's answer is to *refuse* those rather than to locate
+  them. Recovering their real position needs stereo, depth, or proper
+  multi-view triangulation, none of which are implemented.
+- **The demo scene is synthetic.** The detector backend is real and runs on real
+  images, but the patrol's ground truth comes from a scene defined in code,
+  which is what makes the 0.067 m error number measurable at all. It
+  characterises the *geometry and the policy*, not a real room.
+- **No semantic segmentation, no depth, no sensor fusion.** The lidar and the
+  camera do not inform each other; fusing them is the obvious next step and
+  would remove the ground-plane assumption entirely.
 - **2D only.** One floor, one plane, no stairs, no ramps, no multi-storey
   routing, and `Landmark.floor` is carried but unused.
 - **The rule parser is English-only** and regex-based. It will not understand
